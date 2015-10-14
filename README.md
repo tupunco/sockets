@@ -1,13 +1,13 @@
 sockets
 =======
 
-Middlware sockets provides WebSockets channels binding for [Macaron](https://github.com/Unknwon/macaron).
+Middlware sockets provides WebSockets channels binding for [Macaron](https://github.com/go-macaron/macaron).
 
-[API Reference](https://gowalker.org/github.com/macaron-contrib/sockets)
+[API Reference](https://gowalker.org/github.com/go-macaron/sockets)
 
 ### Installation
 
-	go get github.com/macaron-contrib/sockets
+	go get github.com/go-macaron/sockets
 
 ## Description
 

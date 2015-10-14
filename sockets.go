@@ -1,5 +1,5 @@
 // Copyright 2014 Beat Richartz
-// Copyright 2014 Unknwon
+// Copyright 2014 The Macaron Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License"): you may
 // not use this file except in compliance with the License. You may obtain
@@ -29,8 +29,8 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/Unknwon/macaron"
 	"github.com/gorilla/websocket"
+	"gopkg.in/macaron.v1"
 )
 
 type LogLevel int
