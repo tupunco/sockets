@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -32,7 +33,9 @@ const (
 	host            string = "http://localhost:3000"
 	endpoint        string = "ws://localhost:3000"
 	recvPath        string = "/receiver"
+	fastRecvPath    string = "/fast/receiver"
 	sendPath        string = "/sender"
+	fastSendPath    string = "/fast/sender"
 	pingPath        string = "/ping"
 	recvStringsPath string = "/strings/receiver"
 	sendStringsPath string = "/strings/sender"
@@ -48,9 +51,15 @@ var (
 	recvMessages     []*Message
 	recvCount        int
 	recvDone         bool
+	fastRecvMessages []*Message
+	fastRecvCount    int
+	fastRecvDone     bool
 	sendMessages     []*Message
 	sendCount        int
 	sendDone         bool
+	fastSendMessages []*Message
+	fastSendCount    int
+	fastSendDone     bool
 	recvStrings      []string
 	recvStringsCount int
 	recvStringsDone  bool
@@ -126,6 +135,27 @@ func expectIsDone(t *testing.T, done bool) {
 	}
 }
 
+// wsRecvInvodeHandler Handler
+type wsRecvInvodeHandler func(*macaron.Context, <-chan *Message, <-chan bool) int
+
+// Invoke wsRecvInvodeHandler
+func (l wsRecvInvodeHandler) Invoke(p []interface{}) ([]reflect.Value, error) {
+	ret := l(p[0].(*macaron.Context), p[1].(chan *Message), p[2].(chan bool))
+	return []reflect.Value{reflect.ValueOf(ret)}, nil
+}
+
+// wsSendInvodeHandler Handler
+type wsSendInvodeHandler func(*macaron.Context, chan<- *Message, <-chan bool, chan<- int) int
+
+// Invoke wsSendInvodeHandler
+func (l wsSendInvodeHandler) Invoke(p []interface{}) ([]reflect.Value, error) {
+	ret := l(p[0].(*macaron.Context),
+		p[1].(chan *Message),
+		p[2].(chan bool),
+		p[3].(chan int))
+	return []reflect.Value{reflect.ValueOf(ret)}, nil
+}
+
 func startServer() {
 	m := macaron.Classic()
 
@@ -143,9 +173,23 @@ func startServer() {
 		return http.StatusOK
 	})
 
+	m.Get(fastRecvPath, JSON(Message{}), wsRecvInvodeHandler(func(ctx *macaron.Context, receiver <-chan *Message, done <-chan bool) int {
+		for {
+			select {
+			case msg := <-receiver:
+				fastRecvMessages = append(fastRecvMessages, msg)
+			case <-done:
+				fastRecvDone = true
+				return http.StatusOK
+			}
+		}
+
+		return http.StatusOK
+	}))
+
 	m.Get(sendPath, JSON(Message{}), func(ctx *macaron.Context, sender chan<- *Message, done <-chan bool, disconnect chan<- int) int {
 		ticker := time.NewTicker(1 * time.Millisecond)
-		bomb := time.After(4 * time.Millisecond)
+		bomb := time.After(400 * time.Millisecond)
 
 		for {
 			select {
@@ -164,6 +208,27 @@ func startServer() {
 		return http.StatusOK
 	})
 
+	m.Get(fastSendPath, JSON(Message{}), wsSendInvodeHandler(func(ctx *macaron.Context, sender chan<- *Message, done <-chan bool, disconnect chan<- int) int {
+		ticker := time.NewTicker(1 * time.Millisecond)
+		bomb := time.After(400 * time.Millisecond)
+
+		for {
+			select {
+			case <-ticker.C:
+				sender <- &Message{"Hello World"}
+			case <-done:
+				ticker.Stop()
+				fastSendDone = true
+				return http.StatusOK
+			case <-bomb:
+				disconnect <- websocket.CloseGoingAway
+				return http.StatusOK
+			}
+		}
+
+		return http.StatusOK
+	}))
+
 	m.Get(recvStringsPath, Messages(), func(ctx *macaron.Context, receiver <-chan string, done <-chan bool) int {
 		for {
 			select {
@@ -180,7 +245,7 @@ func startServer() {
 
 	m.Get(sendStringsPath, Messages(), func(ctx *macaron.Context, sender chan<- string, done <-chan bool, disconnect chan<- int) int {
 		ticker := time.NewTicker(1 * time.Millisecond)
-		bomb := time.After(4 * time.Millisecond)
+		bomb := time.After(400 * time.Millisecond)
 
 		for {
 			select {
@@ -232,7 +297,6 @@ func TestStringReceive(t *testing.T) {
 		}
 		recvStringsCount++
 		if recvStringsCount == 4 {
-			ws.Close()
 			return
 		}
 	}
@@ -257,6 +321,7 @@ func TestStringSend(t *testing.T) {
 			t.Errorf("Receiving from the socket failed with %v", err)
 		}
 		if sendStringsCount == 3 {
+			//ws.Close()
 			return
 		}
 		sendStringsCount++
@@ -271,9 +336,7 @@ func TestJSONReceive(t *testing.T) {
 	expectMessagesToBeEmpty(t, recvMessages)
 
 	ws, resp := connectSocket(t, recvPath)
-
 	message := &Message{"Hello World"}
-
 	ticker := time.NewTicker(time.Millisecond)
 
 	for {
@@ -282,6 +345,7 @@ func TestJSONReceive(t *testing.T) {
 		if err != nil {
 			t.Errorf("Writing to the socket failed with %v", err)
 		}
+
 		recvCount++
 		if recvCount == 4 {
 			ws.Close()
@@ -293,12 +357,38 @@ func TestJSONReceive(t *testing.T) {
 	expectStatusCode(t, http.StatusSwitchingProtocols, resp.StatusCode)
 	expectIsDone(t, recvDone)
 }
+func TestFastJSONReceive(t *testing.T) {
+	once.Do(startServer)
+	expectMessagesToBeEmpty(t, fastRecvMessages)
+
+	ws, resp := connectSocket(t, fastRecvPath)
+	message := &Message{"Hello World"}
+	ticker := time.NewTicker(time.Millisecond)
+
+	for {
+		<-ticker.C
+		err := ws.WriteJSON(message)
+		if err != nil {
+			t.Errorf("Writing to the socket failed with %v", err)
+		}
+
+		fastRecvCount++
+		if fastRecvCount == 4 {
+			ws.Close()
+			return
+		}
+	}
+
+	expectMessagesToHaveArrived(t, 3, fastRecvMessages)
+	expectStatusCode(t, http.StatusSwitchingProtocols, resp.StatusCode)
+	expectIsDone(t, fastRecvDone)
+}
 
 func TestJSONSend(t *testing.T) {
 	once.Do(startServer)
 	expectMessagesToBeEmpty(t, sendMessages)
-
 	ws, resp := connectSocket(t, sendPath)
+
 	defer ws.Close()
 
 	for {
@@ -309,6 +399,7 @@ func TestJSONSend(t *testing.T) {
 			t.Errorf("Receiving from the socket failed with %v", err)
 		}
 		if sendCount == 3 {
+			//ws.Close()
 			return
 		}
 		sendCount++
@@ -316,6 +407,30 @@ func TestJSONSend(t *testing.T) {
 	expectMessagesToHaveArrived(t, 3, sendMessages)
 	expectStatusCode(t, http.StatusSwitchingProtocols, resp.StatusCode)
 	expectIsDone(t, sendDone)
+}
+func TestFastJSONSend(t *testing.T) {
+	once.Do(startServer)
+	expectMessagesToBeEmpty(t, fastSendMessages)
+
+	ws, resp := connectSocket(t, fastSendPath)
+	defer ws.Close()
+
+	for {
+		msg := &Message{}
+		err := ws.ReadJSON(msg)
+		fastSendMessages = append(fastSendMessages, msg)
+		if err != nil && err != io.EOF {
+			t.Errorf("Receiving from the socket failed with %v", err)
+		}
+		if fastSendCount == 3 {
+			//ws.Close()
+			return
+		}
+		fastSendCount++
+	}
+	expectMessagesToHaveArrived(t, 3, fastSendMessages)
+	expectStatusCode(t, http.StatusSwitchingProtocols, resp.StatusCode)
+	expectIsDone(t, fastSendDone)
 }
 
 func TestOptionsDefaultHandling(t *testing.T) {

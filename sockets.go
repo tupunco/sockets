@@ -188,7 +188,7 @@ type JSONConnection struct {
 // - Starting and terminating the necessary goroutines
 // An optional sockets.Options object can be passed to Messages to overwrite
 // default options mentioned in the documentation of the Options object.
-func Messages(options ...*Options) macaron.Handler {
+func Messages(options ...*Options) macaron.ContextHandler {
 	return makeHandler("", newOptions(options))
 }
 
@@ -220,12 +220,12 @@ func Messages(options ...*Options) macaron.Handler {
 // - Starting and terminating the necessary goroutines
 // An optional sockets.Options object can be passed to Messages to overwrite
 // default options mentioned in the documentation of the Options object.
-func JSON(bindStruct interface{}, options ...*Options) macaron.Handler {
+func JSON(bindStruct interface{}, options ...*Options) macaron.ContextHandler {
 	return makeHandler(bindStruct, newOptions(options))
 }
 
 // Generates a handler from an interface
-func makeHandler(binding interface{}, o *Options) macaron.Handler {
+func makeHandler(binding interface{}, o *Options) macaron.ContextHandler {
 
 	return func(ctx *macaron.Context) {
 		// Upgrade the request to a websocket connection
